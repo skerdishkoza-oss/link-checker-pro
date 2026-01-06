@@ -1,0 +1,28 @@
+run = "npm run start"
+entrypoint = "backend/server.js"
+hidden = [".config", ".cache"]
+
+[languages.javascript]
+pattern = "**/{*.js,*.jsx,*.ts,*.tsx}"
+
+[languages.javascript.languageServer]
+start = "typescript-language-server --stdio"
+
+[nix]
+channel = "stable-22_11"
+
+[env]
+NODE_ENV = "production"
+PORT = "3000"
+
+[packager]
+language = "nodejs"
+
+[packager.features]
+packageSearch = true
+guessImports = true
+enabledForHosting = false
+
+[[ports]]
+localPort = 3000
+externalPort = 80
