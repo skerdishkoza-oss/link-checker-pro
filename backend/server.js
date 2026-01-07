@@ -17,7 +17,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;  // Replit expects port 3000
+const PORT = process.env.PORT || 3001;  // Replit expects port 3000
 const HOST = '0.0.0.0';  // Listen on all interfaces
 
 // In-memory cache for Claude API responses
