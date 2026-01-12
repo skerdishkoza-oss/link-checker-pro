@@ -1,4 +1,4 @@
-// backend/server.js - COMPLETE FIXED VERSION
+// backend/server.js 
 // Install dependencies: npm install express cors puppeteer axios
 
 const express = require('express');
@@ -6,22 +6,51 @@ const cors = require('cors');
 const puppeteer = require('puppeteer');
 const axios = require('axios');
 const { URL } = require('url');
+const path = require('path');
 
 const app = express();
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production'
-    ? process.env.FRONTEND_URL || '*'  // Allow Replit frontend
-    : '*',  // Allow all in development
+    ? process.env.FRONTEND_URL || '*'
+    : '*',
   credentials: true
 };
 app.use(cors(corsOptions));
 app.use(express.json());
 
-const PORT = process.env.PORT || 3001;  // Replit expects port 3000
-const HOST = '0.0.0.0';  // Listen on all interfaces
+const PORT = process.env.PORT || 3000;  // Render uses PORT env variable
+const HOST = '0.0.0.0';
 
 // In-memory cache for Claude API responses
 const analysisCache = new Map();
+
+// ✅ HELPER FUNCTION: Launch browser with correct executable
+async function launchBrowser() {
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
+
+  if (executablePath) {
+    console.log(`🌐 Launching browser with custom path: ${executablePath}`);
+  } else {
+    console.log(`🌐 Launching browser with bundled Chromium`);
+  }
+
+  return await puppeteer.launch({
+    executablePath: executablePath,
+    headless: 'new',
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      '--disable-gpu',
+      '--disable-web-security',
+      '--disable-features=IsolateOrigins,site-per-process'
+    ]
+  });
+}
 
 // Utility: Check if URL is valid
 function isValidUrl(url) {
@@ -69,18 +98,16 @@ function isTrackingPixel(url) {
 
 // Check if status code is actually successful (including special cases)
 function isSuccessStatus(status) {
-  // All 2xx codes are successful
   if (typeof status === 'number' && status >= 200 && status < 300) {
     return true;
   }
-  // 304 Not Modified is also success (cached content)
   if (status === 304) {
     return true;
   }
   return false;
 }
 
-// Check link status with real browser for affiliate links (ONLY check if opens)
+// Check link status with real browser for affiliate links
 async function checkLinkWithBrowser(url, browser) {
   let page;
   try {
@@ -88,10 +115,8 @@ async function checkLinkWithBrowser(url, browser) {
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
 
     const startTime = Date.now();
-
-    // Just check if the link opens - don't wait for full load
     const response = await page.goto(url, {
-      waitUntil: 'domcontentloaded', // Faster - just check if it loads
+      waitUntil: 'domcontentloaded',
       timeout: 15000
     });
 
@@ -125,7 +150,6 @@ async function checkLinkWithBrowser(url, browser) {
 // Check link status with detailed error handling
 async function checkLinkStatus(url, browser = null) {
   try {
-    // Skip tracking pixels and analytics beacons
     if (isTrackingPixel(url)) {
       return {
         status: 200,
@@ -135,7 +159,6 @@ async function checkLinkStatus(url, browser = null) {
       };
     }
 
-    // Skip data URIs, blob URLs, and inline content
     if (url.startsWith('data:') || url.startsWith('blob:')) {
       return {
         status: 200,
@@ -145,7 +168,6 @@ async function checkLinkStatus(url, browser = null) {
       };
     }
 
-    // Handle mailto and tel links
     if (url.startsWith('mailto:')) {
       const emailPattern = /^mailto:[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
       return {
@@ -163,7 +185,6 @@ async function checkLinkStatus(url, browser = null) {
       };
     }
 
-    // Handle javascript: and # links
     if (url.startsWith('javascript:') || url.startsWith('#')) {
       return {
         status: 200,
@@ -172,18 +193,15 @@ async function checkLinkStatus(url, browser = null) {
       };
     }
 
-    // Use browser for affiliate/tracking links
     if (browser && isAffiliateLink(url)) {
       console.log(`Checking affiliate link with browser: ${url}`);
       const result = await checkLinkWithBrowser(url, browser);
 
-      // IMPORTANT: Only ignore 403 on affiliate links
-      // Other errors (404, 500, DNS, etc.) are STILL REPORTED
       if (result.status === 403) {
         console.log(`⚠️ 403 on affiliate link (likely anti-bot) - will be filtered out`);
         return {
           ...result,
-          treatAsWorking: true, // Flag for later filtering
+          treatAsWorking: true,
           statusText: 'Anti-bot protection (link works in browsers)'
         };
       }
@@ -191,7 +209,6 @@ async function checkLinkStatus(url, browser = null) {
       return result;
     }
 
-    // Standard HTTP check for regular links
     const startTime = Date.now();
     const response = await axios.get(url, {
       timeout: 10000,
@@ -275,7 +292,6 @@ PRIORITY: [Critical, High, Medium, or Low]`
 
     const data = await response.json();
 
-    // Check if response has content
     if (!data.content || !Array.isArray(data.content) || data.content.length === 0) {
       console.error('AI API returned invalid response:', data);
       return null;
@@ -346,7 +362,7 @@ function calculateImpactScore(linkData, appearanceCount) {
   return Math.min(Math.max(score, 0), 100);
 }
 
-// Take screenshot of page with error highlighted - VERIFIED WORKING VERSION
+// Take screenshot of page with error highlighted
 async function takeErrorScreenshot(pageUrl, linkText, linkUrl, browser) {
   let page = null;
 
@@ -355,45 +371,29 @@ async function takeErrorScreenshot(pageUrl, linkText, linkUrl, browser) {
     console.log(`   Page: ${pageUrl}`);
     console.log(`   Target URL: ${linkUrl}`);
 
-    // Step 1: Create new page with unique identifier
-    console.log(`   → Step 1: Creating fresh browser page...`);
     page = await browser.newPage();
-
-    // Disable cache to ensure fresh screenshot each time
     await page.setCacheEnabled(false);
-
     await page.setViewport({ width: 1920, height: 1080 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-    console.log(`   ✅ Page created (cache disabled)`);
 
-    // Step 2: Navigate to page (with timeout handling)
-    console.log(`   → Step 2: Navigating to page...`);
     try {
       await page.goto(pageUrl, {
-        waitUntil: 'domcontentloaded', // Just DOM, not full resources
+        waitUntil: 'domcontentloaded',
         timeout: 30000
       });
       console.log(`   ✅ Page loaded successfully`);
     } catch (navError) {
       console.log(`   ⚠️ Navigation timeout/error, continuing anyway: ${navError.message}`);
-      // DON'T THROW - continue with whatever loaded
     }
 
-    // Step 3: Wait for page to settle
-    console.log(`   → Step 3: Waiting for page to settle (1.5s)...`);
     await new Promise(resolve => setTimeout(resolve, 1500));
-    console.log(`   ✅ Page settled`);
 
-    // Step 4: Inject CSS with unique ID to avoid conflicts
-    console.log(`   → Step 4: Injecting highlight CSS...`);
     const uniqueId = `broken-link-${Date.now()}`;
     try {
       await page.evaluate((id) => {
-        // Remove any existing highlight styles
         const existingStyles = document.querySelectorAll('[id^="broken-link-"]');
         existingStyles.forEach(s => s.remove());
 
-        // Remove any existing highlights
         const existingHighlights = document.querySelectorAll('.broken-link-highlight');
         existingHighlights.forEach(el => el.classList.remove('broken-link-highlight'));
 
@@ -428,16 +428,9 @@ async function takeErrorScreenshot(pageUrl, linkText, linkUrl, browser) {
         `;
         document.head.appendChild(style);
       }, uniqueId);
-      console.log(`   ✅ CSS injected successfully (ID: ${uniqueId})`);
     } catch (cssError) {
       console.log(`   ⚠️ CSS injection warning: ${cssError.message}`);
-      // Continue anyway
     }
-
-    // Step 5: Find and highlight link (with fallback strategies)
-    console.log(`   → Step 5: Searching for link to highlight...`);
-    console.log(`      Looking for text: "${linkText}"`);
-    console.log(`      Looking for URL pattern: "${linkUrl.substring(0, 80)}..."`);
 
     const highlightResult = await page.evaluate((searchText, searchUrl) => {
       try {
@@ -446,7 +439,6 @@ async function takeErrorScreenshot(pageUrl, linkText, linkUrl, browser) {
         let usedStrategy = 'none';
         let matchedElement = null;
 
-        // Strategy 1: Exact text match (case-insensitive)
         for (const el of allElements) {
           const elementText = (el.innerText || el.alt || el.textContent || '').trim();
           if (elementText && elementText.toLowerCase() === searchText.toLowerCase()) {
@@ -459,7 +451,6 @@ async function takeErrorScreenshot(pageUrl, linkText, linkUrl, browser) {
           }
         }
 
-        // Strategy 2: Partial text match (if search text is meaningful)
         if (!found && searchText.length > 3) {
           for (const el of allElements) {
             const elementText = (el.innerText || el.alt || el.textContent || '').trim().toLowerCase();
@@ -475,13 +466,11 @@ async function takeErrorScreenshot(pageUrl, linkText, linkUrl, browser) {
           }
         }
 
-        // Strategy 3: URL match (check href or src)
         if (!found) {
           for (const el of allElements) {
             const elementUrl = el.href || el.src || '';
             if (elementUrl && searchUrl) {
-              // Try to match URL patterns
-              const urlParts = searchUrl.split('?')[0]; // Remove query params
+              const urlParts = searchUrl.split('?')[0];
               if (elementUrl.includes(urlParts) || searchUrl.includes(elementUrl)) {
                 el.classList.add('broken-link-highlight');
                 el.scrollIntoView({ behavior: 'auto', block: 'center' });
@@ -494,9 +483,7 @@ async function takeErrorScreenshot(pageUrl, linkText, linkUrl, browser) {
           }
         }
 
-        // Strategy 4: Show banner if link not found on page
         if (!found) {
-          // Remove any existing banners first
           const existingBanners = document.querySelectorAll('[id^="broken-link-banner"]');
           existingBanners.forEach(b => b.remove());
 
@@ -543,13 +530,8 @@ async function takeErrorScreenshot(pageUrl, linkText, linkUrl, browser) {
 
     console.log(`   ✅ Highlight result: ${JSON.stringify(highlightResult)}`);
 
-    // Step 6: Wait for rendering
-    console.log(`   → Step 6: Waiting for highlights to render (1s)...`);
     await new Promise(resolve => setTimeout(resolve, 2000));
-    console.log(`   ✅ Highlights rendered`);
 
-    // Step 7: Capture screenshot
-    console.log(`   → Step 7: Capturing screenshot...`);
     const screenshot = await page.screenshot({
       encoding: 'base64',
       fullPage: false,
@@ -557,16 +539,13 @@ async function takeErrorScreenshot(pageUrl, linkText, linkUrl, browser) {
     });
 
     const sizeKB = Math.round(screenshot.length / 1024);
-    console.log(`   ✅ SUCCESS! Screenshot captured (${sizeKB} KB)`);
-    console.log(`   Strategy used: ${highlightResult.strategy}\n`);
+    console.log(`   ✅ SUCCESS! Screenshot captured (${sizeKB} KB)\n`);
 
-    // Clean up
     await page.close();
     return screenshot;
 
   } catch (error) {
-    console.log(`   ❌ FAILED: ${error.message}`);
-    console.log(`   Error stack: ${error.stack}\n`);
+    console.log(`   ❌ FAILED: ${error.message}\n`);
 
     if (page) {
       try {
@@ -587,19 +566,8 @@ async function crawlWebsite(domain, maxPages = 50) {
   const allLinks = [];
   const baseDomain = new URL(domain).hostname;
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',  // Overcome limited resource problems
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',  // Critical for Replit
-      '--disable-gpu'
-    ]
-  });
+  // ✅ REPLACED: Use launchBrowser() helper
+  const browser = await launchBrowser();
 
   try {
     while (toVisit.length > 0 && visited.size < maxPages) {
@@ -672,12 +640,9 @@ async function crawlWebsite(domain, maxPages = 50) {
           pageUrl: currentUrl
         })));
 
-        // IMPORTANT: Only crawl internal links from same domain
-        // Do NOT crawl affiliate destinations
         const internalLinks = links
           .filter(link => {
             if (link.type !== 'link') return false;
-            // Skip affiliate links - don't crawl their destinations
             if (isAffiliateLink(link.url)) return false;
             try {
               const linkHostname = new URL(link.url).hostname;
@@ -722,29 +687,19 @@ app.post('/api/scan', async (req, res) => {
   let screenshotBrowser = null;
 
   try {
-    // Step 1: Crawl website
     const { pages, links } = await crawlWebsite(domain);
     console.log(`\n✅ Crawled ${pages.length} pages, found ${links.length} links\n`);
 
-    // Launch browsers for affiliate checking and screenshots
-    affiliateBrowser = await puppeteer.launch({
-      headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    // ✅ REPLACED: Use launchBrowser() helper
+    affiliateBrowser = await launchBrowser();
+    screenshotBrowser = await launchBrowser();
 
-    screenshotBrowser = await puppeteer.launch({
-      headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-
-    // Step 2: Count link appearances
     const linkAppearances = new Map();
     links.forEach(link => {
       const key = link.url;
       linkAppearances.set(key, (linkAppearances.get(key) || 0) + 1);
     });
 
-    // Step 3: Check each unique link
     const uniqueLinks = Array.from(new Set(links.map(l => l.url)))
       .map(url => links.find(l => l.url === url));
 
@@ -765,7 +720,6 @@ app.post('/api/scan', async (req, res) => {
 
       const appearanceCount = linkAppearances.get(link.url);
 
-      // Only analyze problematic links
       let aiAnalysis = null;
       const needsAnalysis =
         statusInfo.status !== 200 ||
@@ -787,26 +741,23 @@ app.post('/api/scan', async (req, res) => {
         appearanceCount
       );
 
-      // Determine if this is actually an issue that should be reported
       const isActualIssue = (
-        !isSuccessStatus(statusInfo.status) &&      // Not a success code (200-299, 304)
-        !statusInfo.treatAsWorking &&                // Not flagged as working (403 on affiliate)
-        statusInfo.status !== 200 &&                 // Not explicitly 200
-        !(typeof statusInfo.status === 'number' &&   // Not just a simple redirect
+        !isSuccessStatus(statusInfo.status) &&
+        !statusInfo.treatAsWorking &&
+        statusInfo.status !== 200 &&
+        !(typeof statusInfo.status === 'number' &&
           statusInfo.status >= 300 &&
           statusInfo.status < 400)
       );
 
-      // Special handling: Skip 403 on affiliate links entirely
       if (statusInfo.status === 403 && statusInfo.isAffiliate) {
         console.log(`   ℹ️ Skipping 403 on affiliate link (anti-bot protection)\n`);
-        continue; // Don't add to results at all
+        continue;
       }
 
-      // Skip 304 Not Modified - it's a success status
       if (statusInfo.status === 304) {
         console.log(`   ℹ️ Skipping 304 Not Modified (cached content - working correctly)\n`);
-        continue; // Don't add to results at all
+        continue;
       }
 
       if (isActualIssue || (aiAnalysis && aiAnalysis.issueType !== 'No Issue')) {
@@ -815,7 +766,6 @@ app.post('/api/scan', async (req, res) => {
         if (statusInfo.status === 404) {
           friendlyMessage = `Page not found (404). This link is broken and leads nowhere.`;
         } else if (statusInfo.status === 403) {
-          // This should only show for NON-affiliate 403s now
           friendlyMessage = `Access forbidden (403). The server is blocking access to this page.`;
         } else if (statusInfo.status === 500) {
           friendlyMessage = `Server error (500). The destination server has internal problems.`;
@@ -839,8 +789,6 @@ app.post('/api/scan', async (req, res) => {
           friendlyMessage += ` (Verified with browser)`;
         }
 
-        // Take screenshots for REAL errors (including broken affiliate links)
-        // Only skip screenshots for 403 on affiliate (anti-bot) and cached 304
         let screenshot = null;
         const shouldTakeScreenshot = (
           (statusInfo.status === 404 ||
@@ -848,24 +796,21 @@ app.post('/api/scan', async (req, res) => {
            statusInfo.status === 'ERROR' ||
            statusInfo.status === 'DNS_ERROR' ||
            statusInfo.status === 'TIMEOUT') &&
-          !statusInfo.treatAsWorking  // Don't screenshot 403 anti-bot
+          !statusInfo.treatAsWorking
         );
 
         if (shouldTakeScreenshot) {
           console.log(`   🔍 Taking screenshot for ${statusInfo.status} error on: ${link.pageUrl}`);
-          console.log(`   📸 Link: "${link.text}" → ${link.url}`);
           screenshot = await takeErrorScreenshot(link.pageUrl, link.text, link.url, screenshotBrowser);
 
           if (screenshot) {
-            console.log(`   ✅ Screenshot captured successfully (${Math.round(screenshot.length / 1024)} KB)`);
+            console.log(`   ✅ Screenshot captured successfully`);
           } else {
             console.log(`   ❌ Screenshot capture failed`);
           }
-        } else {
-          console.log(`   ℹ️ Screenshot skipped for status ${statusInfo.status} (not a critical visual error)`);
         }
 
-        console.log(`   ❌ Issue found: ${statusInfo.status} - ${friendlyMessage.substring(0, 80)}...\n`);
+        console.log(`   ❌ Issue found: ${statusInfo.status}\n`);
 
         results.push({
           id: results.length + 1,
@@ -892,12 +837,10 @@ app.post('/api/scan', async (req, res) => {
       }
     }
 
-    // Calculate health score
     const totalLinks = links.length;
     const issueLinks = results.length;
     const healthScore = Math.round(((totalLinks - issueLinks) / totalLinks) * 100);
 
-    // Calculate stats
     const stats = {
       totalPages: pages.length,
       totalLinks: totalLinks,
@@ -915,7 +858,6 @@ app.post('/api/scan', async (req, res) => {
     console.log(`Health Score: ${healthScore}/100`);
     console.log(`Total Links: ${totalLinks}`);
     console.log(`Issues Found: ${issueLinks}`);
-    console.log(`Critical: ${stats.criticalIssues} | High: ${stats.highIssues}`);
     console.log(`${'='.repeat(60)}\n`);
 
     res.json({
@@ -946,13 +888,10 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-const path = require('path');
-
 // Serve static files from React build (for production)
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../frontend/build')));
 
-  // Serve React app for all non-API routes
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api')) {
       res.sendFile(path.join(__dirname, '../frontend/build', 'index.html'));
