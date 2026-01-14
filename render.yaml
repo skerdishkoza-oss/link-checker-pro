@@ -1,13 +1,9 @@
 services:
   - type: web
     name: link-checker-pro
-    env: node
+    env: docker
     plan: free
-    buildCommand: |
-      cd backend && npm install
-      cd ../frontend && npm install
-      cd ../frontend && npm run build
-    startCommand: cd backend && node server.js
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: NODE_ENV
         value: production
